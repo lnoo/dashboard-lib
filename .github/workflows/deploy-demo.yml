@@ -1,0 +1,53 @@
+name: Deploy demo to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pages 部署所需的最小权限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只保留一次部署，新的推送取消进行中的旧部署
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # 发布前冒烟：format:check + lint + test + 库构建 + publint
+      - name: Run checks
+        run: bun run check
+
+      - name: Build demo
+        run: DEMO_BASE=/dashboard-lib/ bun run demo:build
+
+      # enablement: 仓库尚未启用 Pages 时自动创建（需要足够 token 权限）；
+      # 若此步仍报 Not Found，请在仓库 Settings → Pages → Source 选 "GitHub Actions" 后重跑
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo/dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

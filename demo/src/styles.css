@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/* 消费方定义设计令牌（Tailwind v4 @theme）：库只使用标准工具类，颜色语义由消费方决定。 */
+@theme {
+  --color-background: hsl(220 30% 96%);
+  --color-foreground: hsl(224 25% 12%);
+  --color-card: hsl(0 0% 100%);
+  --color-primary: hsl(222 65% 45%);
+  --color-primary-foreground: hsl(0 0% 100%);
+  --color-muted: hsl(220 16% 92%);
+  --color-muted-foreground: hsl(220 10% 42%);
+  --color-destructive: hsl(0 72% 48%);
+  --color-input: hsl(220 14% 84%);
+  --color-border: hsl(220 14% 86%);
+  --color-ring: hsl(222 65% 45%);
+}
+
+/* 热更新：直接扫描库源码；真实消费方指向 @source "../node_modules/@sqx717/dashboard/dist"。 */
+@source "../../src";

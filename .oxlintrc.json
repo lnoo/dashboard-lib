@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  // 默认 correctness = error；在此补充插件与类别
+  "plugins": ["typescript", "react"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    // 本库最关键的两条：Effect 依赖与 Hook 调用约束
+    "exhaustive-deps": "warn",
+    "rules-of-hooks": "error",
+    // 下划线开头的参数/变量视为有意省略（VisualBox 的事件参数等）
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    // 项目使用 jsx: react-jsx 自动运行时，无需手动引入 React
+    "react-in-jsx-scope": "off",
+    // __dirname 等下划线惯用法在 Node 配置文件中属常规写法
+    "no-underscore-dangle": "off"
+  }
+}
