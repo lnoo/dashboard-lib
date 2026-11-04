@@ -7,6 +7,7 @@
 ## 特性
 
 - 大屏外壳 `<Dashboard />`：拖拽 / 缩放 / 锁定 / 删除 / 编辑组件的可视格子，支持 `view` / `edit` 双模式
+- **吸附对齐（smart guides）**：编辑态拖拽 / 缩放自动贴齐其它格子与容器边缘 / 中心线，实时参考线（draw.io 手感，可关闭）
 - 业务组件通过**注册表**注入，库不关心组件实现（懒加载由消费方在组装时决定）
 - 布局与持久化完全由消费方负责：`layout` 注入初始布局，`onLayoutChange` 抛实时布局，`onSave` 抛「保存」定稿
 - **CSS / 主题完全交给消费方**：库只使用标准 Tailwind 工具类，不打包、不注入、不处理主题
@@ -82,6 +83,17 @@ export function Screen({ id }: { id: string }) {
 | `rootClassName`  | `string?`                                               | 根容器基础类，默认 `relative h-dvh w-full bg-background overflow-hidden`                                                                                                                                     |
 | `onSave`         | `(layout: DashboardLayout) => void \| Promise<unknown>` | 保存委托：点击「保存」时把当前布局（`VisualBoxData[]`）整体抛出，持久化（localStorage / 远程）与提示完全由消费方决定。返回 Promise 时 pending 期间忽略重复点击、「保存」按钮禁用；不传则工具栏不显示「保存」 |
 | `onLayoutChange` | `(layout: DashboardLayout) => void`                     | 实时布局回调：增删格子 / 拖停 / 缩停 / 换组件 / 锁定 / 置顶后抛出当前布局。初始 `layout` 注入不触发，回调结果回灌 `layout` 也不会成环。用于「未保存更改」标记、URL 同步、防抖自动保存等                      |
+| `snapEnabled`    | `boolean?`                                              | 是否启用拖拽 / 缩放的吸附对齐（draw.io 式 smart guides），默认开启，仅编辑态交互中生效                                                                                                                       |
+| `snapThreshold`  | `number?`                                               | 吸附触发距离（容器内 px），默认 `6`                                                                                                                                                                          |
+
+### 吸附对齐（smart guides）
+
+编辑态拖拽 / 缩放时自动贴齐对齐线并显示参考线（默认开启，`snapEnabled={false}` 可关闭）：
+
+- **拖拽**：贴齐其它格子的左 / 中 / 右（上 / 中 / 下）与容器边缘 / 中心线；等宽格子完全重叠时起、中、终三条线齐亮（draw.io 行为）
+- **缩放**：按手柄方向贴齐移动中的边；`left` / `top` 方向会同步移动原点（右 / 下边缘保持不动）
+- 参考线颜色可用 CSS 变量覆盖：`--dashboard-snap-guide-color`（默认 `#ec4899`）
+- 松手提交的布局与所见吸附结果一致；吸附不会把尺寸推到 10px 以下、不会把格子推出容器
 
 「保存」把定稿布局抛给消费方，持久化与提示完全由消费方决定（以远程保存 + [sonner](https://sonner.emilkowal.ski/) 为例）：
 

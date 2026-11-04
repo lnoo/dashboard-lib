@@ -2,6 +2,16 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## 1.1.0 - 2026-11-04
+
+### 新增
+
+- **吸附对齐（draw.io 式 smart guides）**：编辑态拖拽 / 缩放自动贴齐其它格子的边缘 / 中心与容器边缘 / 中心线，实时显示参考线；新 props `snapEnabled`（默认开启）与 `snapThreshold`（默认 6px），参考线颜色可经 CSS 变量 `--dashboard-snap-guide-color` 覆盖
+
+### 修复
+
+- `left` / `top` 方向缩放手柄的几何错误：此前 re-resizable 只改宽高、原点不动，拖左 / 上手柄时框会朝反方向伸缩；现在原点同步移动（右 / 下边缘保持不动），并在布局数据中正确提交位置变化
+
 ## 1.0.0 - 2026-11-04
 
 首个稳定版：Vite + React 大屏外壳库。可拖拽 / 缩放 / 锁定 / 删除 / 换组件的可视格子，业务组件由注册表注入，CSS / 主题 / 持久化完全由消费方负责。

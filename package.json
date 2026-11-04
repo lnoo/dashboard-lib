@@ -1,6 +1,6 @@
 {
   "name": "@sqx717/dashboard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "可复用的 Vite + React 大屏（Dashboard）外壳库：可拖拽/缩放的格子布局与业务组件注册表。布局数据与持久化、提示、CSS/主题由消费方负责。",
   "keywords": [
     "bigscreen",

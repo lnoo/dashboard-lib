@@ -14,6 +14,16 @@ import {
   type VisualBoxData,
   resolveRegistryEntry,
 } from "./types";
+import {
+  clampRectToContainer,
+  snapDrag,
+  snapResize,
+  type ResizeDirection,
+  type SnapContext,
+  type SnapGuide,
+  type SnapRect,
+  type SnapResult,
+} from "./snap";
 
 export interface DashboardProps {
   mode?: "edit" | "view";
@@ -41,6 +51,14 @@ export interface DashboardProps {
    * 用于「未保存更改」标记、URL 同步、防抖自动保存等。
    */
   onLayoutChange?: (layout: DashboardLayout) => void;
+  /**
+   * 是否启用拖拽 / 缩放的吸附对齐（draw.io 式 smart guides）：
+   * 拖拽贴齐其它格子的边缘 / 中心与容器边缘 / 中心并显示参考线，缩放贴齐移动中的边。
+   * 默认开启，仅编辑态交互中生效。
+   */
+  snapEnabled?: boolean;
+  /** 吸附触发距离（容器内 px），默认 6。 */
+  snapThreshold?: number;
 }
 
 const defaultContainerClassName = "relative h-dvh w-full bg-background overflow-hidden";
@@ -88,6 +106,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   rootClassName,
   onSave,
   onLayoutChange,
+  snapEnabled = true,
+  snapThreshold = 6,
 }) => {
   // 种子作为初始状态：首次挂载即应用 layout（后续引用变化由下方渲染期重置处理）。
   const [boxes, setBoxes] = useState<VisualBoxData[]>(layout ?? []);
@@ -100,6 +120,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+
+  // 拖拽中的吸附偏移（px）：位移由 react-draggable 内部状态驱动，偏移经 positionOffset 叠加，
+  // 实现拖拽中实时吸附；松手后用同一套吸附逻辑提交，两者结果一致、不跳变。
+  const [dragSnapOffset, setDragSnapOffset] = useState<{ id: string; x: number; y: number } | null>(
+    null,
+  );
+  // 缩放中的实时原点（仅 left / top 方向的边移动时非空），经 livePosition 移动外层。
+  const [resizeLivePosition, setResizeLivePosition] = useState<{
+    id: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  // 当前显示的吸附参考线（容器内 px），只在拖拽 / 缩放贴合时非空。
+  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
 
   const isEditMode = mode === "edit";
   // 首帧容器未测量完成前隐藏格子区，避免格子以 0×0 渲染一帧再弹出。
@@ -169,6 +203,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
     onLayoutChange?.(next);
   };
 
+  // 吸附上下文：其它格子（排除当前交互的格子）+ 容器边缘 / 中心线，均为容器内 px。
+  const getSnapContext = (excludeId: string): SnapContext | null => {
+    if (!snapEnabled || !containerSize.width || !containerSize.height) return null;
+    return {
+      container: { width: containerSize.width, height: containerSize.height },
+      targets: boxes
+        .filter((box) => box.id !== excludeId)
+        .map((box) => ({
+          x: box.position.x * containerSize.width,
+          y: box.position.y * containerSize.height,
+          width: box.size.width * containerSize.width,
+          height: box.size.height * containerSize.height,
+        })),
+      threshold: snapThreshold,
+    };
+  };
+
   const handleDragStart = (id: string) => {
     // 置顶 = 只提升 zIndex，不重排数组——避免拖拽污染持久化的布局数组顺序。
     const maxZ = boxes.reduce((max, b) => Math.max(max, b.zIndex ?? 0), 0);
@@ -177,16 +228,54 @@ export const Dashboard: React.FC<DashboardProps> = ({
     onLayoutChange?.(next);
   };
 
+  // 拖拽每帧回调：吸附校正量作为偏移叠加（视觉实时吸附），并同步参考线。
+  const handleDragMove = (id: string, x: number, y: number) => {
+    const dragged = boxes.find((box) => box.id === id);
+    if (!dragged) return;
+    const ctx = getSnapContext(id);
+    const rect: SnapRect = {
+      x,
+      y,
+      width: dragged.size.width * containerSize.width,
+      height: dragged.size.height * containerSize.height,
+    };
+    const result: SnapResult = ctx ? snapDrag(rect, ctx) : { ...rect, guides: [] };
+    // 吸附线可能把边缘推出容器（钳制回界内，与 react-draggable 的 bounds 行为一致）
+    const snapped = clampRectToContainer(result, {
+      width: containerSize.width,
+      height: containerSize.height,
+    });
+    setDragSnapOffset({ id, x: snapped.x - x, y: snapped.y - y });
+    setSnapGuides(snapped.guides);
+  };
+
   const handleDragStop = (id: string, newPosition: { x: number; y: number }) => {
+    setDragSnapOffset(null);
+    setSnapGuides([]);
     // 容器尚未测量完成时丢弃本次结果（静默不更新，不发 onLayoutChange）。
     if (!containerSize.width || !containerSize.height) return;
+    const dragged = boxes.find((box) => box.id === id);
+    if (!dragged) return;
+    // 与拖拽中同一套吸附逻辑：松手重算一次，保证提交值与所见一致。
+    const ctx = getSnapContext(id);
+    const rect: SnapRect = {
+      x: newPosition.x,
+      y: newPosition.y,
+      width: dragged.size.width * containerSize.width,
+      height: dragged.size.height * containerSize.height,
+    };
+    const result: SnapResult = ctx ? snapDrag(rect, ctx) : { ...rect, guides: [] };
+    const snapped = clampRectToContainer(result, {
+      width: containerSize.width,
+      height: containerSize.height,
+    });
     const next = boxes.map((box) => {
       if (box.id !== id) return box;
       return {
         ...box,
         position: {
-          x: newPosition.x / containerSize.width,
-          y: newPosition.y / containerSize.height,
+          x: snapped.x / containerSize.width,
+          y: snapped.y / containerSize.height,
         },
       };
     });
@@ -194,15 +283,41 @@ export const Dashboard: React.FC<DashboardProps> = ({
     onLayoutChange?.(next);
   };
 
-  const handleResizeStop = (id: string, newSize: { width: number; height: number }) => {
+  // 缩放每帧回调：返回吸附校正后的矩形（VisualBox 用它校正 DOM），原点变化经 livePosition 移动。
+  const handleResizeMove = (
+    id: string,
+    direction: ResizeDirection,
+    tentative: SnapRect,
+  ): SnapRect => {
+    const ctx = getSnapContext(id);
+    const result: SnapResult = ctx
+      ? snapResize(tentative, direction, ctx)
+      : { ...tentative, guides: [] };
+    setResizeLivePosition({ id, x: result.x, y: result.y });
+    setSnapGuides(result.guides);
+    return { x: result.x, y: result.y, width: result.width, height: result.height };
+  };
+
+  const handleResizeStop = (id: string, direction: ResizeDirection, rawRect: SnapRect) => {
+    setResizeLivePosition(null);
+    setSnapGuides([]);
     if (!containerSize.width || !containerSize.height) return;
+    // 与缩放中同一套吸附逻辑：松手重算一次，保证提交值与所见一致。
+    const ctx = getSnapContext(id);
+    const result: SnapResult = ctx
+      ? snapResize(rawRect, direction, ctx)
+      : { ...rawRect, guides: [] };
     const next = boxes.map((box) => {
       if (box.id !== id) return box;
       return {
         ...box,
+        position: {
+          x: result.x / containerSize.width,
+          y: result.y / containerSize.height,
+        },
         size: {
-          width: newSize.width / containerSize.width,
-          height: newSize.height / containerSize.height,
+          width: result.width / containerSize.width,
+          height: result.height / containerSize.height,
         },
       };
     });
@@ -334,11 +449,39 @@ export const Dashboard: React.FC<DashboardProps> = ({
               zIndex={box.zIndex ?? index + 1}
               bounds={bounds}
               selectedComponentType={box.componentType}
+              livePosition={
+                resizeLivePosition?.id === box.id
+                  ? { x: resizeLivePosition.x, y: resizeLivePosition.y }
+                  : undefined
+              }
+              snapOffset={
+                dragSnapOffset?.id === box.id
+                  ? { x: dragSnapOffset.x, y: dragSnapOffset.y }
+                  : undefined
+              }
+              onDragMove={isEditMode && isDesigning ? handleDragMove : undefined}
+              onResizeMove={isEditMode && isDesigning ? handleResizeMove : undefined}
             >
               <BoxContent componentType={box.componentType} registry={registry} />
             </VisualBox>
           );
         })}
+        {/* 吸附参考线（draw.io 式）：仅在拖拽 / 缩放贴合时出现。
+            颜色可经 CSS 变量 --dashboard-snap-guide-color 覆盖。 */}
+        {snapGuides.map((guide, guideIndex) => (
+          <div
+            key={`${guide.axis}:${guide.position}:${guideIndex}`}
+            aria-hidden="true"
+            className="pointer-events-none absolute"
+            style={{
+              backgroundColor: "var(--dashboard-snap-guide-color, #ec4899)",
+              zIndex: 9999,
+              ...(guide.axis === "x"
+                ? { left: guide.position, top: 0, width: 1, height: "100%" }
+                : { top: guide.position, left: 0, height: 1, width: "100%" }),
+            }}
+          />
+        ))}
         {boxes.length === 0 && isEditMode && (
           <Empty
             className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"

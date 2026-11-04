@@ -1,9 +1,14 @@
 import React, { useRef } from "react";
-import Draggable, { DraggableBounds } from "react-draggable";
+import Draggable, {
+  type DraggableBounds,
+  type DraggableData,
+  type DraggableEvent,
+} from "react-draggable";
 import { Button } from "../primitives/Button";
 import { cn } from "../utils/cn";
 import { X, Lock, Unlock, Edit } from "lucide-react";
-import { Resizable } from "re-resizable";
+import { Resizable, type NumberSize } from "re-resizable";
+import type { ResizeDirection, SnapRect } from "./snap";
 
 export interface VisualBoxProps {
   id: string;
@@ -12,7 +17,7 @@ export interface VisualBoxProps {
   size: { width: number; height: number };
   onDragStart: (id: string) => void;
   onDragStop: (id: string, newPosition: { x: number; y: number }) => void;
-  onResizeStop: (id: string, newSize: { width: number; height: number }) => void;
+  onResizeStop: (id: string, direction: ResizeDirection, rawRect: SnapRect) => void;
   onSelectComponent: (id: string, componentType: string | null) => void;
   onDelete: (id: string) => void;
   onToggleLock: (id: string, isLocked: boolean) => void;
@@ -22,6 +27,20 @@ export interface VisualBoxProps {
   zIndex: number;
   bounds: DraggableBounds;
   selectedComponentType: string | null;
+  /**
+   * 交互中的实时原点（容器内 px）：仅缩放 left / top 方向（边移动改变原点）时由父级提供，
+   * 用于移动外层；拖拽不用它（位移由 react-draggable 内部状态驱动）。空闲时回落到 position。
+   */
+  livePosition?: { x: number; y: number };
+  /** 拖拽中的吸附偏移（px）：叠加在 react-draggable 自身位移之上实现实时吸附。 */
+  snapOffset?: { x: number; y: number };
+  /** 拖拽过程中的每帧回调（未吸附的原始坐标，容器内 px）。 */
+  onDragMove?: (id: string, x: number, y: number) => void;
+  /**
+   * 缩放过程中的每帧回调：传入原始 tentative 矩形，返回吸附校正后的矩形。
+   * 返回值用于在 re-resizable 写入原始尺寸后、同一事件内校正 DOM（绘制前生效）。
+   */
+  onResizeMove?: (id: string, direction: ResizeDirection, tentative: SnapRect) => SnapRect;
 }
 
 const VisualBox: React.FC<VisualBoxProps> = ({
@@ -40,6 +59,10 @@ const VisualBox: React.FC<VisualBoxProps> = ({
   zIndex,
   bounds,
   selectedComponentType,
+  livePosition,
+  snapOffset,
+  onDragMove,
+  onResizeMove,
 }) => {
   const nodeRef = useRef<HTMLDivElement>(null);
 
@@ -47,27 +70,62 @@ const VisualBox: React.FC<VisualBoxProps> = ({
     onDragStart(id);
   };
 
+  const handleDragMove = (_e: DraggableEvent, data: DraggableData): void => {
+    // 不返回 false：react-draggable 会把 false 当作「取消拖拽」并合成 (0,0) 的 mouseup。
+    // 位移仍由其内部状态驱动，吸附偏移经 snapOffset（positionOffset）叠加。
+    onDragMove?.(id, data.x, data.y);
+  };
+
   const handleDragStop = (_e: unknown, data: { x: number; y: number }) => {
     onDragStop(id, { x: data.x, y: data.y });
   };
 
+  /**
+   * 由「已提交尺寸 + 增量」还原缩放的原始 tentative 矩形。
+   * left / top 方向的边在移动（re-resizable 只改宽高、不动原点），
+   * 因此原点需按「固定边不动」反推：rawX = 固定右边缘 - 新宽度。
+   * 基准始终用已提交的 position / size（缩放期间不变），逐帧绝对换算、不累积误差。
+   */
+  const computeRawRect = (direction: ResizeDirection, delta: NumberSize): SnapRect => {
+    const rawWidth = size.width + delta.width;
+    const rawHeight = size.height + delta.height;
+    // 方向名是驼峰（topLeft…），先归一小写再匹配关键字
+    const dir = direction.toLowerCase();
+    const rawX = dir.includes("left") ? position.x + size.width - rawWidth : position.x;
+    const rawY = dir.includes("top") ? position.y + size.height - rawHeight : position.y;
+    return { x: rawX, y: rawY, width: rawWidth, height: rawHeight };
+  };
+
+  const handleResizeMove = (
+    _e: unknown,
+    direction: ResizeDirection,
+    elementRef: HTMLElement,
+    delta: NumberSize,
+  ) => {
+    if (!onResizeMove) return;
+    const snapped = onResizeMove(id, direction, computeRawRect(direction, delta));
+    // re-resizable 在 flushSync 写入原始尺寸之后才调用本回调：同一事件内改写 DOM，
+    // 绘制前完成校正；下一次 mousemove 它先写回原始值，这里再吸附一次。
+    elementRef.style.width = `${snapped.width}px`;
+    elementRef.style.height = `${snapped.height}px`;
+  };
+
   const handleResizeStop = (
     _e: unknown,
-    _direction: unknown,
+    direction: ResizeDirection,
     _ref: HTMLElement,
-    d: { width: number; height: number },
+    d: NumberSize,
   ) => {
-    onResizeStop(id, {
-      width: size.width + d.width,
-      height: size.height + d.height,
-    });
+    onResizeStop(id, direction, computeRawRect(direction, d));
   };
 
   return (
     <Draggable
       handle=".drag-handle"
-      position={position}
+      position={livePosition ?? position}
+      positionOffset={snapOffset}
       onStart={handleDragStart}
+      onDrag={handleDragMove}
       onStop={handleDragStop}
       nodeRef={nodeRef}
       bounds={bounds}
@@ -76,6 +134,7 @@ const VisualBox: React.FC<VisualBoxProps> = ({
       <div ref={nodeRef} style={{ zIndex: zIndex, position: "absolute" }}>
         <Resizable
           size={size}
+          onResize={handleResizeMove}
           onResizeStop={handleResizeStop}
           style={{ position: "relative" }}
           enable={isEditing && !isLocked ? undefined : false}
